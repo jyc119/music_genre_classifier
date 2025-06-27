@@ -1,0 +1,11 @@
+# Ignore data and CSV files
+data/
+*.csv
+
+# Ignore other large content folders (add more if needed)
+genres_original/
+images_original/
+
+# Ignore Python cache
+__pycache__/
+*.pyc
