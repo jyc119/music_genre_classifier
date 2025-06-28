@@ -11,6 +11,8 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import accuracy_score
 from torchview import draw_graph
 
+from collections import defaultdict, Counter
+
 
 GENRES = 'blues classical country disco hiphop jazz metal pop reggae rock'.split()
 ROOT_DIR = 'data/genres_original'
@@ -53,15 +55,16 @@ def resize_to_128x128(mel_db):
 
 # --- Custom Dataset ---
 class GenreDataset(Dataset):
-    def __init__(self, X, y):
+    def __init__(self, X, y, track_ids):
         self.X = torch.tensor(X, dtype=torch.float32)
         self.y = torch.tensor(y, dtype=torch.long)
+        self.track_ids = track_ids
 
     def __len__(self):
         return len(self.X)
 
     def __getitem__(self, idx):
-        return self.X[idx], self.y[idx]
+        return self.X[idx], self.y[idx], self.track_ids[idx]
 
 
 # --- Dataset Creation ---
@@ -88,6 +91,78 @@ def create_dataset():
 
     return train_test_split(X, y_encoded, stratify=y_encoded, test_size=0.2, random_state=42)
 
+
+def create_dataset_with_track_ids():
+    def build_split(track_ids_subset):
+        X, y, track_ids = [], [], []
+        for tid in track_ids_subset:
+            label = track_to_label[tid]
+            label_encoded = GENRES.index(label)
+            for chunk in track_to_chunks[tid]:
+                X.append(chunk)
+                y.append(label_encoded)
+                track_ids.append(tid)
+        return np.array(X).reshape(-1, 1, 128, 128), np.array(y), track_ids
+
+    chunk_data = []  # each entry: (mel, genre, track_id)
+
+    for genre in GENRES:
+        genre_path = os.path.join(ROOT_DIR, genre)
+        for file in os.listdir(genre_path):
+            if file.endswith('.wav'):
+                file_path = os.path.join(genre_path, file)
+                track_id = os.path.splitext(file)[0]
+
+                sr = 22050
+                y_audio, _ = librosa.load(file_path, sr=sr, duration=30)
+                samples_per_chunk = sr * 3
+
+                for i in range(10):  # 10 chunks
+                    start = i * samples_per_chunk
+                    end = start + samples_per_chunk
+                    chunk = y_audio[start:end]
+                    if len(chunk) < samples_per_chunk:
+                        continue
+
+                    mel = librosa.feature.melspectrogram(chunk, sr=sr, n_mels=128, fmax=8000)
+                    mel_db = librosa.power_to_db(mel, ref=np.max)
+                    mel_resized = resize_to_128x128(mel_db)
+                    mel_norm = (mel_resized - np.mean(mel_resized)) / np.std(mel_resized)
+
+                    chunk_data.append((mel_norm, genre, track_id))
+
+    # Group by track
+    track_to_chunks = {}
+    track_to_label = {}
+    for mel, genre, track_id in chunk_data:
+        track_to_chunks.setdefault(track_id, []).append(mel)
+        track_to_label[track_id] = genre
+
+    # Split by unique track IDs
+    track_ids = list(track_to_chunks.keys())
+    genres = [track_to_label[tid] for tid in track_ids]
+    train_tracks, test_tracks = train_test_split(track_ids, stratify=genres, test_size=0.2, random_state=42)
+
+    X_train, y_train, train_ids = build_split(train_tracks)
+    X_test, y_test, test_ids = build_split(test_tracks)
+
+    return X_train, X_test, y_train, y_test, train_ids, test_ids
+
+
+def majority_vote(preds, ids, true_label_map):
+    grouped = defaultdict(list)
+    for pred, track_id in zip(preds, ids):
+        grouped[track_id].append(pred)
+
+    final_preds = []
+    final_trues = []
+
+    for track_id, pred_list in grouped.items():
+        vote = Counter(pred_list).most_common(1)[0][0]
+        final_preds.append(vote)
+        final_trues.append(true_label_map[track_id])
+
+    return final_trues, final_preds
 
 # --- Training + Evaluation ---
 def train_and_evaluate():

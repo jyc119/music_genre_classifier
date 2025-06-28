@@ -5,6 +5,7 @@ data/
 # Ignore other large content folders (add more if needed)
 genres_original/
 images_original/
+genres_split/
 
 # Ignore Python cache
 __pycache__/
