@@ -13,7 +13,6 @@ from torchview import draw_graph
 
 from collections import defaultdict, Counter
 
-
 GENRES = 'blues classical country disco hiphop jazz metal pop reggae rock'.split()
 ROOT_DIR = 'data/genres_original'
 
@@ -96,11 +95,11 @@ def create_dataset_with_track_ids():
     def build_split(track_ids_subset):
         X, y, track_ids = [], [], []
         for tid in track_ids_subset:
-            label = track_to_label[tid]
-            label_encoded = GENRES.index(label)
+            genre = track_to_label[tid]
+            genre_encoded = GENRES.index(genre)
             for chunk in track_to_chunks[tid]:
                 X.append(chunk)
-                y.append(label_encoded)
+                y.append(genre_encoded)
                 track_ids.append(tid)
         return np.array(X).reshape(-1, 1, 128, 128), np.array(y), track_ids
 
@@ -114,7 +113,11 @@ def create_dataset_with_track_ids():
                 track_id = os.path.splitext(file)[0]
 
                 sr = 22050
-                y_audio, _ = librosa.load(file_path, sr=sr, duration=30)
+                try:
+                    y_audio, _ = librosa.load(file_path, sr=sr, duration=30)
+                except Exception as e:
+                    print(f"Failed to load {file_path}: {e}")
+                    continue
                 samples_per_chunk = sr * 3
 
                 for i in range(10):  # 10 chunks
@@ -124,7 +127,7 @@ def create_dataset_with_track_ids():
                     if len(chunk) < samples_per_chunk:
                         continue
 
-                    mel = librosa.feature.melspectrogram(chunk, sr=sr, n_mels=128, fmax=8000)
+                    mel = librosa.feature.melspectrogram(y=chunk, sr=sr, n_mels=128, fmax=8000)
                     mel_db = librosa.power_to_db(mel, ref=np.max)
                     mel_resized = resize_to_128x128(mel_db)
                     mel_norm = (mel_resized - np.mean(mel_resized)) / np.std(mel_resized)
@@ -132,10 +135,10 @@ def create_dataset_with_track_ids():
                     chunk_data.append((mel_norm, genre, track_id))
 
     # Group by track
-    track_to_chunks = {}
+    track_to_chunks = defaultdict(list)
     track_to_label = {}
     for mel, genre, track_id in chunk_data:
-        track_to_chunks.setdefault(track_id, []).append(mel)
+        track_to_chunks[track_id].append(mel)
         track_to_label[track_id] = genre
 
     # Split by unique track IDs
@@ -164,12 +167,13 @@ def majority_vote(preds, ids, true_label_map):
 
     return final_trues, final_preds
 
+
 # --- Training + Evaluation ---
 def train_and_evaluate():
     # Prepare data
-    X_train, X_val, y_train, y_val = create_dataset()
-    train_loader = DataLoader(GenreDataset(X_train, y_train), batch_size=32, shuffle=True)
-    val_loader = DataLoader(GenreDataset(X_val, y_val), batch_size=32, shuffle=False)
+    X_train, X_val, y_train, y_val, train_ids, test_ids = create_dataset_with_track_ids()
+    train_loader = DataLoader(GenreDataset(X_train, y_train, train_ids), batch_size=32, shuffle=True)
+    val_loader = DataLoader(GenreDataset(X_val, y_val, test_ids), batch_size=32, shuffle=False)
 
     # Model
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -182,7 +186,7 @@ def train_and_evaluate():
     for epoch in range(num_epochs):
         model.train()
         running_loss = 0.0
-        for batch_x, batch_y in train_loader:
+        for batch_x, batch_y, _ in train_loader:
             batch_x, batch_y = batch_x.to(device), batch_y.to(device)
 
             optimizer.zero_grad()
@@ -195,20 +199,32 @@ def train_and_evaluate():
 
         print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {running_loss / len(train_loader):.4f}")
 
-    # Validation
-    model.eval()
-    all_preds = []
-    all_targets = []
-    with torch.no_grad():
-        for batch_x, batch_y in val_loader:
-            batch_x = batch_x.to(device)
-            outputs = model(batch_x)
-            preds = torch.argmax(outputs, dim=1).cpu().numpy()
-            all_preds.extend(preds)
-            all_targets.extend(batch_y.numpy())
+        # Validation with track ID voting
+        model.eval()
+        chunk_preds = []
+        chunk_ids = []
+        chunk_trues = []
 
-    accuracy = accuracy_score(all_targets, all_preds)
-    print(f"\nValidation Accuracy: {accuracy:.4f}")
+        with torch.no_grad():
+            for batch_x, batch_y, batch_track in val_loader:
+                batch_x = batch_x.to(device)
+                outputs = model(batch_x)
+                preds = torch.argmax(outputs, dim=1).cpu().numpy()
+
+                chunk_preds.extend(preds)
+                chunk_ids.extend(batch_track)
+                chunk_trues.extend(batch_y.tolist())
+
+        # Build true label map for voting
+        true_label_map = {}
+        for track_id, true_label in zip(chunk_ids, chunk_trues):
+            if track_id not in true_label_map:
+                true_label_map[track_id] = true_label  # assumes all chunks from a track have same label
+
+        # Track-level accuracy via majority vote
+        true, pred = majority_vote(chunk_preds, chunk_ids, true_label_map)
+        acc = accuracy_score(true, pred)
+        print(f"\nTrack-Level Accuracy via Majority Voting: {acc:.4f}")
 
 
 # Run training
