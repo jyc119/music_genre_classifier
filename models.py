@@ -15,7 +15,7 @@ import collections
 import pandas as pd
 import csv
 
-from metrics import performance_metric, build_confusion_matrix
+from metrics import performance_metric, build_confusion_matrix_majority, build_confusion_matrix
 from helper import write_csv, write_csv_predictions
 
 
@@ -80,7 +80,6 @@ def train_knn(df):
 
     print(f"\nBest k: {best_k}, Test accuracy: {best_score:.4f}")
     performance_metric(y_test, best_pred)
-    build_confusion_matrix(X_test, y_test, pipeline)
 
 
 def train_knn_chunk_level(df):
@@ -132,6 +131,7 @@ def train_knn_chunk_level(df):
             best_pipeline = pipeline
 
     print(f"\nBest k: {best_k}, Best chunk-level accuracy: {best_score:.4f}")
+    build_confusion_matrix(X_test, y_test, best_pipeline)
 
 
 def train_knn_with_majority(df):
@@ -143,7 +143,7 @@ def train_knn_with_majority(df):
     best_trues = None
 
     for k in range(1, 11):
-        knn = KNeighborsClassifier(n_neighbors=k)
+        knn = KNeighborsClassifier(n_neighbors=k, p=1, weights='distance')
         pipeline = Pipeline([
             ('scaler', StandardScaler()),
             ('pca', PCA(n_components=0.95)),
@@ -195,33 +195,14 @@ def train_knn_with_majority(df):
     print(f"\nBest k: {best_k}, Test accuracy: {best_score:.4f}")
 
     # performance_metric(best_trues, best_preds)
+    build_confusion_matrix_majority(best_trues, best_preds)
 
 
 def train_mlp(df):
     best_score = 0
     best_config = None
 
-    # Step 1: Get unique track IDs and their genres
-    unique_tracks = df['track_id'].unique()
-    track_genres = df.groupby('track_id')['genre'].first()
-
-    # Step 2: Split track IDs into train/test
-    train_tracks, test_tracks = train_test_split(
-        unique_tracks,
-        stratify=track_genres[unique_tracks],
-        test_size=0.2,
-        random_state=42
-    )
-
-    # Step 3: Build masks to filter chunk-level data
-    train_mask = df['track_id'].isin(train_tracks)
-    test_mask = df['track_id'].isin(test_tracks)
-
-    # Step 4: Split the actual chunk-level data
-    X = df.drop(columns=['genre', 'track_id'])
-    y = df['genre']
-    X_train, X_test = X[train_mask], X[test_mask]
-    y_train, y_test = y[train_mask], y[test_mask]
+    X_train, X_test, y_train, y_test, test_track_ids = evaluate_model_majority_vote(df)
 
     # Example: trying multiple hidden layer sizes
     hidden_layer_configs = [(100,), (200,), (100, 50), (128, 64)]
@@ -247,6 +228,69 @@ def train_mlp(df):
             best_config = config
 
     print(f"\nBest config: {best_config}, CV accuracy: {best_score:.4f}")
+
+
+def train_mlp_majority(df):
+    best_score = 0
+    best_config = None
+
+    X_train, X_test, y_train, y_test, test_track_ids = evaluate_model_majority_vote(df)
+
+    # Example: trying multiple hidden layer sizes
+    hidden_layer_configs = [(100,), (200,), (100, 50), (128, 64)]
+    best_trues = best_preds = None
+
+    for config in hidden_layer_configs:
+        mlp = MLPClassifier(hidden_layer_sizes=config, max_iter=500, random_state=42)
+
+        pipeline = Pipeline([
+            ('scaler', StandardScaler()),
+            ('pca', PCA(n_components=0.95)),
+            ('mlp', mlp)
+        ])
+
+        pipeline.fit(X_train, y_train)
+        chunk_preds = pipeline.predict(X_test)
+
+        # Map predictions to track IDs
+        track_pred_map = collections.defaultdict(list)
+        for pred, track_id in zip(chunk_preds, test_track_ids):
+            track_pred_map[track_id].append(pred)
+
+        # if k == 1:
+        # write_csv(track_pred_map)  # assuming this logs predictions per track
+
+        final_preds = []
+        final_true = []
+
+        for track_id, preds in track_pred_map.items():
+            # Count genre occurrences
+            counts = collections.Counter(preds)
+            most_common = counts.most_common()
+
+            # Check if there's a majority and no tie at top
+            top_genre, top_count = most_common[0]
+            tied = len([count for _, count in most_common if count == top_count])
+
+            # Use mode regardless of tie
+            track_mode = collections.Counter(preds).most_common(1)[0][0]
+            final_preds.append(track_mode)
+
+            # Only for majority-voted tracks
+            final_true.append(df[df['track_id'] == track_id]['genre'].iloc[0])
+
+        score = accuracy_score(final_true, final_preds)
+
+        print(f"MLP {config}, CV accuracy = {score:.4f}")
+
+        if score > best_score:
+            best_score = score
+            best_config = config
+            best_preds = final_preds
+            best_trues = final_true
+
+    print(f"\nBest config: {best_config}, CV accuracy: {best_score:.4f}")
+    performance_metric(best_trues, best_preds)
 
 
 def train_rf(df):
@@ -340,3 +384,5 @@ def train_rf_full(df):
     # Report
     score = np.mean(np.array(final_preds) == np.array(final_true))
     print(f"RF Test accuracy = {score:.4f}")
+
+    performance_metric(final_true, final_preds)

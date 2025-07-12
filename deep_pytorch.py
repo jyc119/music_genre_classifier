@@ -104,6 +104,7 @@ def create_dataset_with_track_ids():
         return np.array(X).reshape(-1, 1, 128, 128), np.array(y), track_ids
 
     chunk_data = []  # each entry: (mel, genre, track_id)
+    hop_duration = 1
 
     for genre in GENRES:
         genre_path = os.path.join(ROOT_DIR, genre)
@@ -119,9 +120,11 @@ def create_dataset_with_track_ids():
                     print(f"Failed to load {file_path}: {e}")
                     continue
                 samples_per_chunk = sr * 3
+                hop_length = int(hop_duration * sr)
+                total_chunks = 1 + (len(y_audio) - samples_per_chunk) // hop_length  # allows overlap
 
-                for i in range(10):  # 10 chunks
-                    start = i * samples_per_chunk
+                for i in range(total_chunks):  # 10 chunks
+                    start = i * hop_length
                     end = start + samples_per_chunk
                     chunk = y_audio[start:end]
                     if len(chunk) < samples_per_chunk:
@@ -182,7 +185,7 @@ def train_and_evaluate():
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
     # Training loop
-    num_epochs = 20
+    num_epochs = 10
     for epoch in range(num_epochs):
         model.train()
         running_loss = 0.0
