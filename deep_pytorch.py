@@ -10,6 +10,11 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import accuracy_score
 from torchview import draw_graph
+from sklearn.metrics import classification_report, precision_score, recall_score, f1_score
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+import matplotlib.pyplot as plt
+
+
 
 from collections import defaultdict, Counter
 
@@ -34,6 +39,51 @@ class CNNGenreClassifier(nn.Module):
 
     def forward(self, x):
         return self.fc_stack(self.conv_stack(x))
+
+
+class CNNRNNGenreClassifier(nn.Module):
+    def __init__(self, num_classes):
+        super(CNNRNNGenreClassifier, self).__init__()
+
+        # CNN feature extractor
+        self.conv_stack = nn.Sequential(
+            nn.Conv2d(1, 32, kernel_size=3, padding=1), nn.BatchNorm2d(32), nn.ReLU(), nn.MaxPool2d(2),
+            nn.Conv2d(32, 64, kernel_size=3, padding=1), nn.BatchNorm2d(64), nn.ReLU(), nn.MaxPool2d(2),
+            nn.Conv2d(64, 128, kernel_size=3, padding=1), nn.BatchNorm2d(128), nn.ReLU(), nn.MaxPool2d(2)
+        )
+
+        # RNN input: (batch, seq_len, input_size)
+        # After 3 MaxPool2d(2) on 128x128 input -> (128, 16, 16)
+        self.gru = nn.GRU(
+            input_size=16 * 128,  # channels * freq_bins
+            hidden_size=128,
+            num_layers=1,
+            batch_first=True,
+            bidirectional=True
+        )
+
+        # Fully connected output layer
+        self.fc = nn.Sequential(
+            nn.Dropout(0.3),
+            nn.Linear(128 * 2, num_classes)  # *2 for bidirectional
+        )
+
+    def forward(self, x):
+        batch_size = x.size(0)
+
+        # CNN output: [B, 128, 16, 16]
+        x = self.conv_stack(x)
+
+        # Reshape for GRU: [B, 16 (time steps), 128*16]
+        x = x.permute(0, 2, 1, 3).contiguous()  # [B, time, channels, features]
+        x = x.view(batch_size, 16, -1)  # [B, seq_len, input_size]
+
+        # GRU output: [B, seq_len, 2*hidden_size] → take last step
+        _, hidden = self.gru(x)  # hidden: [2, B, 128] (bidirectional)
+        hidden = torch.cat([hidden[0], hidden[1]], dim=1)  # [B, 256]
+
+        out = self.fc(hidden)
+        return out
 
 
 # --- Preprocessing ---
@@ -91,7 +141,7 @@ def create_dataset():
     return train_test_split(X, y_encoded, stratify=y_encoded, test_size=0.2, random_state=42)
 
 
-def create_dataset_with_track_ids():
+def create_dataset_with_track_ids(chunk_duration=6):
     def build_split(track_ids_subset):
         X, y, track_ids = [], [], []
         for tid in track_ids_subset:
@@ -119,11 +169,11 @@ def create_dataset_with_track_ids():
                 except Exception as e:
                     print(f"Failed to load {file_path}: {e}")
                     continue
-                samples_per_chunk = sr * 3
+                samples_per_chunk = sr * chunk_duration
                 hop_length = int(hop_duration * sr)
                 total_chunks = 1 + (len(y_audio) - samples_per_chunk) // hop_length  # allows overlap
 
-                for i in range(total_chunks):  # 10 chunks
+                for i in range(total_chunks):
                     start = i * hop_length
                     end = start + samples_per_chunk
                     chunk = y_audio[start:end]
@@ -171,6 +221,57 @@ def majority_vote(preds, ids, true_label_map):
     return final_trues, final_preds
 
 
+def get_label_from_filename(filename):
+    return filename.split(".")[0]
+
+
+def preprocess_test_file(file_path, sr=22050):
+    y, _ = librosa.load(file_path, sr=sr)
+
+    mel = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128, fmax=8000)
+    mel_db = librosa.power_to_db(mel, ref=np.max)
+    mel_resized = resize_to_128x128(mel_db)
+    mel_norm = (mel_resized - np.mean(mel_resized)) / np.std(mel_resized)
+
+    tensor_input = torch.tensor(mel_norm, dtype=torch.float32).unsqueeze(0).unsqueeze(0)  # shape: (1, 1, 128, 128)
+    return tensor_input
+
+def predict_track(file_path, model, device):
+    y, _ = librosa.load(file_path, sr=22050, duration=30)
+    chunk_preds = []
+    sr = 22050
+    chunk_duration = 6  # seconds
+    hop_duration = 1  # seconds
+    samples_per_chunk = int(sr * chunk_duration)
+    hop_length = int(sr * hop_duration)
+
+    total_chunks = 1 + (len(y) - samples_per_chunk) // hop_length
+    for i in range(total_chunks):
+        start = i * hop_length
+        end = start + samples_per_chunk
+        chunk = y[start:end]
+        if len(chunk) < samples_per_chunk:
+            continue
+
+        mel = librosa.feature.melspectrogram(y=chunk, sr=sr, n_mels=128, fmax=8000)
+        mel_db = librosa.power_to_db(mel, ref=np.max)
+        mel_resized = resize_to_128x128(mel_db)
+        mel_norm = (mel_resized - np.mean(mel_resized)) / np.std(mel_resized)
+        x = torch.tensor(mel_norm).unsqueeze(0).unsqueeze(0).float().to(device)
+
+        with torch.no_grad():
+            output = model(x)
+            pred = torch.argmax(output, dim=1).item()
+            chunk_preds.append(pred)
+
+    # Majority vote
+    if chunk_preds:
+        final_pred = Counter(chunk_preds).most_common(1)[0][0]
+    else:
+        final_pred = None  # or handle differently if you expect no valid chunks
+    return final_pred
+
+
 # --- Training + Evaluation ---
 def train_and_evaluate():
     # Prepare data
@@ -180,15 +281,23 @@ def train_and_evaluate():
 
     # Model
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = CNNGenreClassifier(num_classes=len(GENRES)).to(device)
+    # model = CNNGenreClassifier(num_classes=len(GENRES)).to(device)
+    model = CNNRNNGenreClassifier(num_classes=len(GENRES)).to(device)
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    # optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    # optimizer = torch.optim.Adam(model.parameters(), lr=0.0005, weight_decay=1e-4)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.0005, weight_decay=1e-4)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=3, gamma=0.5)
 
     # Training loop
-    num_epochs = 10
+    num_epochs = 20
+    train_accuracies = []
+    val_accuracies = []
     for epoch in range(num_epochs):
         model.train()
         running_loss = 0.0
+        correct = 0
+        total = 0
         for batch_x, batch_y, _ in train_loader:
             batch_x, batch_y = batch_x.to(device), batch_y.to(device)
 
@@ -200,7 +309,15 @@ def train_and_evaluate():
 
             running_loss += loss.item()
 
-        print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {running_loss / len(train_loader):.4f}")
+            # Training accuracy
+            preds = torch.argmax(outputs, dim=1)
+            correct += (preds == batch_y).sum().item()
+            total += batch_y.size(0)
+
+        train_acc = correct / total
+        train_accuracies.append(train_acc)
+        print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {running_loss / len(train_loader):.4f}, "
+              f"Training Accuracy: {train_acc:.4f}")
 
         # Validation with track ID voting
         model.eval()
@@ -226,8 +343,47 @@ def train_and_evaluate():
 
         # Track-level accuracy via majority vote
         true, pred = majority_vote(chunk_preds, chunk_ids, true_label_map)
-        acc = accuracy_score(true, pred)
-        print(f"\nTrack-Level Accuracy via Majority Voting: {acc:.4f}")
+
+        val_acc = accuracy_score(true, pred)
+        val_accuracies.append(val_acc)
+        print(f"Track-Level Validation Accuracy (Majority Vote): {val_acc:.4f}")
+        # if val_acc >= 0.8000:
+        #     break
+        scheduler.step()
+
+    disp = ConfusionMatrixDisplay.from_predictions(true, pred, display_labels=GENRES)
+    disp.plot(xticks_rotation=45)
+    plt.title(f"CNN Confusion Matrix")
+    plt.show()
+
+    # print(train_accuracies, val_accuracies)
+    print("-----------------------------------------")
+    print("Starting test")
+
+    correct = 0
+    total = 0
+    y_true = []
+    y_pred = []
+
+    for file in os.listdir("test_data"):
+        if file.endswith(".wav"):
+            genre = get_label_from_filename(file)
+            genre_to_idx = {g: i for i, g in enumerate(GENRES)}
+            true_label = genre_to_idx[genre]
+            filepath = os.path.join("test_data", file)
+            pred_label = predict_track(filepath, model, device)
+
+            if pred_label is not None:
+                correct += (pred_label == true_label)
+                total += 1
+                y_true.append(true_label)
+                y_pred.append(pred_label)
+
+    print(f"Test Accuracy (Majority Vote): {correct / total:.2%}")
+    disp = ConfusionMatrixDisplay.from_predictions(y_true, y_pred, display_labels=GENRES)
+    disp.plot(xticks_rotation=45)
+    plt.title(f"Test Set Confusion Matrix")
+    plt.show()
 
 
 # Run training

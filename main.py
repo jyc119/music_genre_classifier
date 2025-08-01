@@ -218,6 +218,36 @@ def all_features():
     df = pd.DataFrame(records, columns=feature_names)
     return df
 
+def all_features_nonover():
+    records = []
+    feature_names = None
+
+    for genre in os.listdir(ROOT_DIR):
+        if genre not in GENRES:
+            continue
+        genre_path = os.path.join(ROOT_DIR, genre)
+        for filename in os.listdir(genre_path):
+            if filename.endswith('.wav'):
+                file_path = os.path.join(genre_path, filename)
+                track_id = os.path.splitext(filename)[0]
+
+                chunked_records = extract_features_non_overlap(file_path)
+
+                if chunked_records is None:
+                    print(f"Skipping bad file: {file_path}")
+                    continue
+
+                for features, names in chunked_records:
+                    if feature_names is None:
+                        feature_names = names + ['genre', 'track_id']
+                    record = dict(zip(names, features))
+                    record['genre'] = genre
+                    record['track_id'] = track_id
+                    records.append(record)
+
+    df = pd.DataFrame(records, columns=feature_names)
+    return df
+
 def test():
     def avg(arr):
         return sum(arr) / len(arr)
@@ -234,6 +264,7 @@ def test():
     mlp_recall = [0.75, 0.95, 0.7,  0.55, 0.65, 0.8,  0.8 , 0.85, 0.75, 0.65]
     mlp_f1 = [0.81081081, 0.86363636 ,0.73684211, 0.57894737, 0.72222222, 0.84210526, 0.86486486, 0.73913043, 0.73170732, 0.57777778]
 
+
 def main():
     start = time.time()
     features = all_features()
@@ -242,11 +273,18 @@ def main():
     # models.train_knn_chunk_level(features)
     # models.train_rf(features)
     # models.train_rf_full(features)
-    models.train_mlp_majority(features)
+    models.train_knn_with_majority(features)
     end = time.time()
     print("Time taken: " + str(end - start))
 
+    start = time.time()
+    fo = all_features_nonover()
+    models.train_knn_with_majority(fo)
+    end = time.time()
+    print("Time taken Non-overlapping: " + str(end - start))
+
+
 
 if __name__ == '__main__':
-    main()
-    # test()
+    # main()
+    test()

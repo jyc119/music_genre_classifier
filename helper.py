@@ -133,8 +133,70 @@ def write_csv_predictions(predictions, true_values, filename="preds.csv"):
             writer.writerow([pred, true])
 
 
+def draw_graph():
+    training = [0.582, 0.769, 0.8432, 0.9201, 0.9484,
+                0.9687,0.989, 0.9922, 0.9940, 0.9966,
+                0.9968, 0.9976, 0.9981, 0.9983, 0.9983,
+                0.9984, 0.9984, 0.9985, 0.9986, 0.9986]
+
+    validation = [0.69, 0.72, 0.77, 0.815, 0.805,
+                  0.8, 0.835, 0.805, 0.81, 0.825,
+                  0.845, 0.81, 0.83, 0.835, 0.83,
+                  0.835, 0.82, 0.825, 0.83, 0.83]
+
+    training_cnn = [0.5623854441414458, 0.7778175153113684, 0.8707586391881622, 0.9244043095355179, 0.9374580893200412,
+                    0.9570834637221154, 0.9662032276811658, 0.9664267513076132, 0.9723724797711119, 0.9714336805400331,
+                    0.973, 0.975, 0.974, 0.974, 0.976,
+                    0.976, 0.9765, 0.976, 0.977, 0.978]
+
+    validation_cnn = [0.67, 0.79, 0.795, 0.795, 0.83,
+                      0.805, 0.795, 0.785, 0.795, 0.805,
+                      0.78, 0.785, 0.78, 0.8, 0.8,
+                      0.805, 0.795, 0.78, 0.79, 0.805,
+                      ]
+
+    # epochs = range(1, len(training) + 1)
+    #
+    # plt.figure(figsize=(8, 5))
+    # plt.plot(epochs, training, label='Training Accuracy', marker='o')
+    # plt.plot(epochs, validation, label='Validation Accuracy', marker='s')
+    # plt.xlabel('Epoch')
+    # plt.ylabel('Accuracy')
+    # plt.title('Training vs Validation Accuracy over Epochs')
+    # plt.legend()
+    # plt.grid(True)
+    # plt.tight_layout()
+    # plt.xticks(range(1, 21))
+    # plt.show()
+
+    epochs = range(1, 21)
+
+    plt.figure(figsize=(10, 6))
+
+    # CNN+RNN
+    plt.plot(epochs, training, label='CNN+RNN Training', marker='o', linestyle='-', color='#1f77b4')
+    plt.plot(epochs, validation, label='CNN+RNN Validation', marker='s', linestyle='--', color='#1f77b4')
+
+    # CNN
+    plt.plot(epochs, training_cnn, label='CNN Training', marker='^', linestyle='-', color='#ff7f0e')
+    plt.plot(epochs, validation_cnn, label='CNN Validation', marker='d', linestyle='--', color='#ff7f0e')
+
+    plt.xlabel('Epoch')
+    plt.ylabel('Accuracy')
+    plt.title('CNN vs CNN+RNN Training and Validation Accuracy')
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.xticks(epochs)
+    plt.ylim(0.5, 1.1)
+
+    plt.show()
+
+
 # file = "data/genres_original/blues/blues.00000.wav"
 # # plot_mel_spectrogram(file)
 # # plot_spectral_centroid(file)
 # # plot_mfcc(file)
 # plot_audio_features(file)
+
+draw_graph()

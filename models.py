@@ -131,7 +131,7 @@ def train_knn_chunk_level(df):
             best_pipeline = pipeline
 
     print(f"\nBest k: {best_k}, Best chunk-level accuracy: {best_score:.4f}")
-    build_confusion_matrix(X_test, y_test, best_pipeline)
+    # build_confusion_matrix(X_test, y_test, best_pipeline)
 
 
 def train_knn_with_majority(df):
@@ -195,7 +195,7 @@ def train_knn_with_majority(df):
     print(f"\nBest k: {best_k}, Test accuracy: {best_score:.4f}")
 
     # performance_metric(best_trues, best_preds)
-    build_confusion_matrix_majority(best_trues, best_preds)
+    # build_confusion_matrix_majority(best_trues, best_preds)
 
 
 def train_mlp(df):
