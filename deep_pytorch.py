@@ -351,39 +351,43 @@ def train_and_evaluate():
         #     break
         scheduler.step()
 
-    disp = ConfusionMatrixDisplay.from_predictions(true, pred, display_labels=GENRES)
-    disp.plot(xticks_rotation=45)
-    plt.title(f"CNN Confusion Matrix")
-    plt.show()
+    file_path = "model.pth"
+    # torch.save(model, file_path)
+    torch.save(model.state_dict(), "model.pth")
+
+    # disp = ConfusionMatrixDisplay.from_predictions(true, pred, display_labels=GENRES)
+    # disp.plot(xticks_rotation=45)
+    # plt.title(f"CNN Confusion Matrix")
+    # plt.show()
 
     # print(train_accuracies, val_accuracies)
-    print("-----------------------------------------")
-    print("Starting test")
-
-    correct = 0
-    total = 0
-    y_true = []
-    y_pred = []
-
-    for file in os.listdir("test_data"):
-        if file.endswith(".wav"):
-            genre = get_label_from_filename(file)
-            genre_to_idx = {g: i for i, g in enumerate(GENRES)}
-            true_label = genre_to_idx[genre]
-            filepath = os.path.join("test_data", file)
-            pred_label = predict_track(filepath, model, device)
-
-            if pred_label is not None:
-                correct += (pred_label == true_label)
-                total += 1
-                y_true.append(true_label)
-                y_pred.append(pred_label)
-
-    print(f"Test Accuracy (Majority Vote): {correct / total:.2%}")
-    disp = ConfusionMatrixDisplay.from_predictions(y_true, y_pred, display_labels=GENRES)
-    disp.plot(xticks_rotation=45)
-    plt.title(f"Test Set Confusion Matrix")
-    plt.show()
+    # print("-----------------------------------------")
+    # print("Starting test")
+    #
+    # correct = 0
+    # total = 0
+    # y_true = []
+    # y_pred = []
+    #
+    # for file in os.listdir("test_data"):
+    #     if file.endswith(".wav"):
+    #         genre = get_label_from_filename(file)
+    #         genre_to_idx = {g: i for i, g in enumerate(GENRES)}
+    #         true_label = genre_to_idx[genre]
+    #         filepath = os.path.join("test_data", file)
+    #         pred_label = predict_track(filepath, model, device)
+    #
+    #         if pred_label is not None:
+    #             correct += (pred_label == true_label)
+    #             total += 1
+    #             y_true.append(true_label)
+    #             y_pred.append(pred_label)
+    #
+    # print(f"Test Accuracy (Majority Vote): {correct / total:.2%}")
+    # disp = ConfusionMatrixDisplay.from_predictions(y_true, y_pred, display_labels=GENRES)
+    # disp.plot(xticks_rotation=45)
+    # plt.title(f"Test Set Confusion Matrix")
+    # plt.show()
 
 
 # Run training
