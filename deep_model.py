@@ -6,6 +6,7 @@ import numpy as np
 import cv2
 from collections import Counter
 from typing import Optional
+from deep_pytorch import CNNRNNGenreClassifier
 
 class DeepLearningGenreClassifier:
     def __init__(self, model_path: str, device: Optional[str] = None):
@@ -13,8 +14,11 @@ class DeepLearningGenreClassifier:
         Initialize the classifier by loading a trained PyTorch model.
         """
         self.device = torch.device(device if device else ("cuda" if torch.cuda.is_available() else "cpu"))
-        self.model = torch.load(model_path, map_location=self.device)
-        self.model.eval()  # Evaluation mode
+        # self.model = torch.load(model_path, map_location=self.device) # Accuracy: 82.5, Loss: 0.9984
+        self.model = CNNRNNGenreClassifier(num_classes=10)  # <- You must redefine the architecture here
+        self.model.load_state_dict(torch.load(model_path, map_location=self.device))
+        self.model.eval()
+        # self.model.eval()  # Evaluation mode
 
     def _resize_mel(self, mel_db: np.ndarray) -> np.ndarray:
         """

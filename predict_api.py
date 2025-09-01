@@ -6,10 +6,10 @@ import os
 
 app = FastAPI()
 classifier = DeepLearningGenreClassifier(model_path="model.pth")
-
+GENRES = 'blues classical country disco hiphop jazz metal pop reggae rock'.split()
 
 class PredictionResult(BaseModel):
-    genre_id: int
+    genre: str
 
 
 @app.post("/predict", response_model=PredictionResult)
@@ -22,6 +22,10 @@ async def predict_genre(file: UploadFile = File(...)):
     with open(temp_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    genre_id = classifier.predict(temp_path)
+    genre = GENRES[classifier.predict(temp_path)]
     os.remove(temp_path)  # Clean up temp file
-    return {"genre_id": genre_id}
+    return {"genre": genre}
+
+@app.get("/")
+def read_root():
+    return {"Hello": "World"}

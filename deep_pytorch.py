@@ -353,7 +353,7 @@ def train_and_evaluate():
 
     file_path = "model.pth"
     # torch.save(model, file_path)
-    torch.save(model.state_dict(), "model.pth")
+    torch.save(model.state_dict(), file_path)
 
     # disp = ConfusionMatrixDisplay.from_predictions(true, pred, display_labels=GENRES)
     # disp.plot(xticks_rotation=45)
@@ -391,5 +391,5 @@ def train_and_evaluate():
 
 
 # Run training
-train_and_evaluate()
+# train_and_evaluate()
 # display_cnn()
