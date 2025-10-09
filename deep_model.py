@@ -4,8 +4,8 @@ import torch.nn as nn
 import librosa
 import numpy as np
 import cv2
-from collections import Counter
-from typing import Optional
+from collections import Counter, defaultdict
+from typing import Optional, Tuple
 from deep_pytorch import CNNRNNGenreClassifier
 
 class DeepLearningGenreClassifier:
@@ -37,16 +37,37 @@ class DeepLearningGenreClassifier:
         x = torch.tensor(mel_norm).unsqueeze(0).unsqueeze(0).float().to(self.device)
         return x
 
-    def predict(self, file_path: str) -> Optional[int]:
+    def predict(self, file_path: str) -> Optional[Tuple[int, float]]:
         """
         Predict genre of the input audio file using chunk-based voting.
         """
+        # total_chunks = 1 + (len(y) - samples_per_chunk) // hop_length
+        # for i in range(total_chunks):
+        #     start = i * hop_length
+        #     end = start + samples_per_chunk
+        #     chunk = y[start:end]
+        #
+        #     if len(chunk) < samples_per_chunk:
+        #         continue
+        #
+        #     x = self._preprocess_chunk(chunk, sr=sr)
+        #
+        #     with torch.no_grad():
+        #         output = self.model(x)
+        #         pred = torch.argmax(output, dim=1).item()
+        #         chunk_preds.append(pred)
+        #
+        # if chunk_preds:
+        #     return Counter(chunk_preds).most_common(1)[0][0]
+        # else:
+        #     return None
+
         y, _ = librosa.load(file_path, sr=22050, duration=30)
         chunk_preds = []
 
         sr = 22050
         chunk_duration = 6  # seconds
-        hop_duration = 1    # seconds
+        hop_duration = 1  # seconds
         samples_per_chunk = int(sr * chunk_duration)
         hop_length = int(sr * hop_duration)
 
@@ -62,11 +83,22 @@ class DeepLearningGenreClassifier:
             x = self._preprocess_chunk(chunk, sr=sr)
 
             with torch.no_grad():
-                output = self.model(x)
-                pred = torch.argmax(output, dim=1).item()
-                chunk_preds.append(pred)
+                output = self.model(x)  # logits
+                probs = torch.softmax(output, dim=1)  # convert to probabilities
+                pred = torch.argmax(probs, dim=1).item()
+                conf = probs[0, pred].item()
+                chunk_preds.append((pred, conf))
 
-        if chunk_preds:
-            return Counter(chunk_preds).most_common(1)[0][0]
-        else:
-            return None
+        if not chunk_preds:
+            return None, None
+
+        # Group confidences by class
+        class_confidences = defaultdict(list)
+        for pred, conf in chunk_preds:
+            class_confidences[pred].append(conf)
+
+        # Majority vote (pick class with most votes)
+        majority_class = max(class_confidences, key=lambda k: len(class_confidences[k]))
+        confidence = sum(class_confidences[majority_class]) / len(class_confidences[majority_class])
+
+        return majority_class, confidence

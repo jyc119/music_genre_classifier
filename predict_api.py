@@ -10,6 +10,7 @@ GENRES = 'blues classical country disco hiphop jazz metal pop reggae rock'.split
 
 class PredictionResult(BaseModel):
     genre: str
+    confidence: float
 
 
 @app.post("/predict", response_model=PredictionResult)
@@ -22,9 +23,10 @@ async def predict_genre(file: UploadFile = File(...)):
     with open(temp_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    genre = GENRES[classifier.predict(temp_path)]
+    index, confidence = classifier.predict(temp_path)
+    genre = GENRES[index]
     os.remove(temp_path)  # Clean up temp file
-    return {"genre": genre}
+    return {"genre": genre, "confidence": confidence}
 
 @app.get("/")
 def read_root():
